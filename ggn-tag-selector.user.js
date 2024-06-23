@@ -2,28 +2,18 @@
 // @name				GGn Tag selector
 // @namespace	 ggntagselector
 // @match			 *://gazellegames.net/upload.php*
-// @match			 *://gazellegames.net/user.php*action=edit*
+// @match			 *://gazellegames.net/user.php*
 // @match			 *://gazellegames.net/torrents.php*id=*
 // @grant			 GM.setValue
 // @grant			 GM.getValue
 // @grant			 GM.info
-// @version		 1.0.0
+// @version		 0.8.2
 // @author			tweembp
 // @description Enhanced Tag selector for GGn
 // ==/UserScript==
 
-/*
-Copyright 2024 tweembp
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the “Software”), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-*/
-
 (async () => {
+
 	const VERSION = GM.info.script.version
 	const SEP = '|' 
 	const TAGSEP = ', '
@@ -55,6 +45,7 @@ THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR I
 		'show_indices': 'shift'
 	}
 	const modifiers = ["shift","alt","ctrl","cmd"]
+	// specify the tags you want at the end of a given category here (regardless of their position according to sorting) 
 	const categoryDict = {
 		"genre": [
 		"4x",
@@ -282,8 +273,59 @@ THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR I
 		}
 	}
 	
-	// async function fix_backward_compatibility(oldVersion) {
-	// }
+	async function fix_backward_compatibility(oldVersion) {
+		console.log(`Backward compatibility fix: ${oldVersion} => ${VERSION} ...`)
+		if(compare_versions('0.6.0', oldVersion) === 'larger') {
+			// seperators changed (',' => ', ')
+			// update all presets
+			let presets = (await GM.getValue('gts_presets'))
+			if(typeof presets === 'undefined') {
+				return
+			}
+			if(presets.length === 0) {
+				return 
+			}
+			let _temp = []
+			for(let preset of presets) {
+				_temp.push(preset.split(',').map((tag) => tag.trim()).join(TAGSEP))
+			}
+			await GM.setValue('gts_presets', _temp)
+		}
+		if(compare_versions('0.8.0', oldVersion) === 'larger') {
+			// map old favorites/presets (which can be of any category)
+			// to category-specific favorites/presets
+			let savedFavorites = (await GM.getValue('gts_favorites'))
+			let savedPresets = (await GM.getValue('gts_presets'))
+			let newDict = [{}, {}]
+			for(const [idx, list] of [savedFavorites, savedPresets].entries()) {
+				for(const element of list) {
+					let category = 'Games'
+					let _element = element
+					if(idx === 1) {
+						_element = element.split(TAGSEP)[0]
+					}
+					let reverseCategoryKeys = {}
+					for(let [key, value] of Object.entries(categoryKeys)) {
+						for(const v of value) {
+							reverseCategoryKeys[v] = key
+						}
+					}
+					for(const [key, tagList] of Object.entries(categoryDict)) {
+						if(tagList.includes(_element)) {
+							category = reverseCategoryKeys[key]
+							break
+						}
+					}
+					if(!(category in newDict[idx])) {
+						newDict[idx][category] = []
+					}
+					newDict[idx][category].push(element)
+				}
+			}
+			await GM.setValue('gts_favorites', newDict[0])
+			await GM.setValue('gts_presets', newDict[1])
+		}
+	}
 	
 	// backward compatibility fixes
 	savedVersion = (await GM.getValue('gts_version')) || '0.5.0'
@@ -331,6 +373,7 @@ THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR I
 		return _s[_s.length - 1].split('#')[0].split('?')[0].replace('.php', '')
 	}
 
+	// https://stackoverflow.com/a/61975440
 	function observe_element(element, property, callback, delay = 0) {
 		let elementPrototype = Object.getPrototypeOf(element);
 		if (elementPrototype.hasOwnProperty(property)) {
@@ -377,8 +420,10 @@ THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR I
 		return searchStringDict
 	}
 	
+	// set no. of found tags to -1
 	let foundTags = -1
 	let windowEvents = []
+	
 	
 	inject_css(`
 		.gts-selector *::-webkit-scrollbar {
@@ -535,7 +580,10 @@ THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR I
 		}
 	`)
 	
+	
+	
 	// renderer functions
+	
 	let tagBox
 	let searchBox 
 	let modal
@@ -705,6 +753,7 @@ THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR I
 		tagBoxStyle = tagBox.currentStyle || window.getComputedStyle(tagBox)
 		tdStyle = tagBox.parentElement.currentStyle || window.getComputedStyle(tagBox.parentElement)
 		const _rect = tagBox.getBoundingClientRect()
+		// modal.style.width = _rect.width * 2.6 + 'px'
 		modal.style.top = (parseInt(tagBoxStyle.marginTop.replace('px',''), 10) +
 			parseInt(tagBoxStyle.marginBottom.replace('px',''), 10) +
 				tagBoxStyle.offsetHeight) + 'px'
@@ -750,31 +799,35 @@ THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR I
 		draw_categoryarea()
 	
 		searchBox = document.querySelector('#gts-search')
-		searchBox.addEventListener('keydown', (event) => {
-			if(event.key === 'Enter' || (event.key === 'Tab' && foundTags.length === 1)) {
-				event.preventDefault()
-				event.stopPropagation()
+		searchBox.addEventListener('keydown', (e) => {
+			if(e.key === 'Enter' || (e.key === 'Tab' && foundTags.length === 1)) {
+				e.preventDefault()
+				e.stopPropagation()
 			} 
 		})
-		searchBox.addEventListener('keyup', (event) => {
-			if(event.key === 'Tab' && foundTags.length === 1) {
+		searchBox.addEventListener('keyup', (e) => {
+			if(e.key === 'Tab' && foundTags.length === 1) {
 				add_tag(foundTags[0])
-			} else if(event.key === 'Enter') {
-				let tag = event.target.value.trim()
+				// searchBox.value = ''
+				// searchBox.focus()
+			} else if(e.key === 'Enter') {
+				let tag = e.target.value.trim()
 				tag = tag.replaceAll(' ', '.')
 				if(tag.length > 0) {
 					add_tag(tag)
+					// searchBox.value = ''
+					// searchBox.focus()	
 				}
 			}
-			let query = event.target.value.trim()
+			let query = e.target.value.trim()
 			if(query === '') {
 				query = SEP
 			}
 			query = query.toLowerCase()
 			draw_categoryarea(query)
 		})
-		searchBox.addEventListener('keyup', (event) => {
-			if(event.code === 'Escape') {
+		searchBox.addEventListener('keyup', (e) => {
+			if(e.code === 'Escape') {
 				hide_gts()
 			}
 		})
@@ -950,6 +1003,7 @@ THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR I
 			return categoryElement.value
 		}
 		categoryElement = document.querySelector('#group_nofo_bigdiv .head:first-child')
+		// let s = categoryElement.classList[0].split('_')
 		const s = categoryElement.innerText.trim()
 		if(s.indexOf('Application') !== -1) {
 			return 'Applications'
@@ -1069,8 +1123,8 @@ THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR I
 		insert_modal()
 		insert_preset_button()
 		if(!windowEvents.includes('click')) {
-			window.addEventListener('click', (event) => {
-				if(!check_gts_element(event.target)) {
+			window.addEventListener('click', (e) => {
+				if(!check_gts_element(e.target)) {
 					setTimeout(() => {
 						if(!check_gts_element(document.activeElement)) {
 							hide_gts()
@@ -1081,9 +1135,9 @@ THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR I
 			windowEvents.push('click')
 		}
 		if(!windowEvents.includes('esc')) {
-			window.addEventListener('keyup', (event) => {
-				if(event.code === 'Escape') {
-					if(check_gts_active()) {
+			window.addEventListener('keyup', (e) => {
+				if(e.code === 'Escape') {
+					if(check_gts_active()) { // this will unnecessary calls to check_gts_active()
 						hide_gts()
 					}
 				}
@@ -1092,8 +1146,8 @@ THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR I
 		}
 		tagBox.addEventListener('focus', show_gts)
 		tagBox.addEventListener('click', show_gts)
-		tagBox.addEventListener('keyup', (event) => {
-			if(event.code !== 'Escape') {
+		tagBox.addEventListener('keyup', (e) => {
+			if(e.code !== 'Escape') {
 				draw_currenttagsarea()
 			}
 		})
@@ -1248,5 +1302,5 @@ THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR I
 	
 	}
 	
-})()
+	})()
 	
